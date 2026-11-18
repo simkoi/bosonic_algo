@@ -1,0 +1,22 @@
+# Full-shared settings for classical and quantum dynamics.
+basis:
+  Nr: 16
+  NR: 128
+  Nquad_r: 200
+  Nquad_R: 200
+time:
+  start: 0.0
+  stop: 1400.0
+  points: 71
+cavity:
+  enabled: false
+  include_dse: true
+  omega_alpha: 0.1
+  lambda_alpha: 0.005
+  cutoff_ph: 8
+tgifs:
+  substeps: 20
+  kinetic: gaussian
+output:
+  snapshot_every: 10
+  save_last: true

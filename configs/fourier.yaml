@@ -1,0 +1,13 @@
+# Only override values needed: unspecified keys come from config.FOURIER_DEFAULTS.
+basis: half_lattice
+orders: [[14, 14]]
+boxes: [[20.0, 80.0], [30.0, 80.0], [40.0, 80.0]]
+ridge_lambdas: [0.0001]
+order_strengths: [10.0]
+order_powers: [1.0]
+top_n: [50]
+selection_methods: [force_scale]
+refit_ridge_multiplier: 1.0
+raw_v_rmse_max: 0.01
+# Explicitly list fitted IDs here to authorize costly classical propagation.
+selected_for_dynamics: []
