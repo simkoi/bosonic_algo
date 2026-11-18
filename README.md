@@ -83,6 +83,17 @@ inspect the rejected summaries before changing it.
 - `saved_df` (from `generate_fits()`): accepted, reduced, and saved Fourier fits only. Every row has complete reduced-fit metrics and a usable `fit_id`. The same rows are written to `data/fits/index.csv`.
 - `raw_df` (from `data/fits/raw_fit_summary.csv`): every raw Fourier candidate, including `passed` and `rejected` entries, with raw potential and force errors.
 
+The notebook checks that the imported `bosonic_algo.fourier` is the current
+uniform-reporting implementation and prints its actual source path. If this
+check fails, update the refactor branch with `git pull`, **restart the Jupyter
+kernel**, and rerun the notebook: the old version combined accepted and
+rejected rows and will show missing values as NaN for mixed box sweeps.
+
+The active configuration's full box sweep is assessed in `raw_df`. The
+saved-fit table covers only the current sweep. A separate historical scan via
+`list_fits()` may include older fit metadata with different metric fields; do
+not interpret gaps in the historical catalog as a failed new numerical fit.
+
 Rejected fits are intentionally **not reduced or saved**. If `saved_df` is empty, inspect the raw table's `v_rmse` values relative to `raw_v_rmse_max` in `configs/fourier.yaml`. Adjust the threshold only if the raw approximations are scientifically acceptable, or improve the Fourier configuration. No classical dynamics are run until `selected_for_dynamics` explicitly names saved fit IDs.
 
 ## Results and reproducibility

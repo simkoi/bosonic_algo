@@ -13,7 +13,8 @@ import numpy as np
 from .config import FOURIER_DEFAULTS, merge_defaults
 from .physics import shin_metiu_potential, shin_metiu_forces, coordinate_lengths
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 1  # Saved Fourier coefficients file format
+SUMMARY_SCHEMA_VERSION = 2  # Uniform raw-vs-reduced reporting
 
 
 def canonical_json(data: dict) -> str:

@@ -106,3 +106,35 @@ def test_saved_and_rejected_fit_tables_do_not_mix_columns(tmp_path):
     assert raw_df.iloc[0]["status"] == "passed"
     assert not saved_df.isna().any().any()
     assert not raw_df.isna().any().any()
+
+
+def test_sixteen_boxes_report_rejections_without_dataframe_nans(tmp_path):
+    """Use the user's 4x4 box sweep, with a small order for fast CI tests.
+
+    A mixed accepted/rejected sweep must not merge records with different
+    schemas into a single DataFrame (the original cause of missing values).
+    """
+    import pandas as pd
+
+    boxes = [[i, j] for i in (20, 40, 60, 80) for j in (20, 40, 60, 80)]
+    rows = generate_fits({
+        "orders": [[3, 3]],
+        "boxes": boxes,
+        "top_n": [5],
+        "raw_v_rmse_max": 0.07,
+    }, root=tmp_path)
+
+    raw = pd.read_csv(tmp_path / "raw_fit_summary.csv")
+    saved = pd.DataFrame(rows)
+    saved_index = pd.read_csv(tmp_path / "index.csv")
+
+    assert len(raw) == 16
+    assert len(saved) == 8
+    assert (raw["status"] == "passed").sum() == 8
+    assert (raw["status"] == "rejected").sum() == 8
+    assert set(raw.loc[raw["status"] == "rejected", "fourier_box_r"]) == {20., 40.}
+    assert set(raw.loc[raw["status"] == "passed", "fourier_box_r"]) == {60., 80.}
+    assert not raw.isna().any().any()
+    assert not saved.isna().any().any()
+    assert not saved_index.isna().any().any()
+    assert (saved["status"] == "saved").all()
