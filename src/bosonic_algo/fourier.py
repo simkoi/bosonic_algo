@@ -185,43 +185,126 @@ def list_fits(root: str | Path) -> list[dict]:
     return items
 
 
-def generate_fits(overrides: dict | None=None, root: str | Path="data/fits") -> list[dict]:
-    """Fit/screen/reduce/save all survivors; performs NO classical propagation."""
-    cfg=merge_defaults(FOURIER_DEFAULTS,overrides)
-    g=cfg["grid"]
-    grid=(np.arange(g["r_min"],g["r_max"],g["r_step"]),
-          np.arange(g["R_min"],g["R_max"],g["R_step"]))
-    rows=[]
-    for order,box,lam,strength,power in product(cfg["orders"],cfg["boxes"],cfg["ridge_lambdas"],cfg["order_strengths"],cfg["order_powers"]):
-        mvec=build_mvec(order,cfg["basis"])
-        base={"model":cfg["model"],"grid":g,"basis":cfg["basis"],"fourier_order":order,
-              "fourier_box":box,"ridge_lambda":lam,"order_strength":strength,"order_power":power}
-        raw=_fit_on_support(mvec,order,box,grid,cfg["model"],lam,strength,power,
-                            {**base,"selection_method":"raw"})
-        raw_metrics=metrics(raw,grid,cfg["model"],cfg["diagnostic_dt"],cfg["coeff_tol"])
-        if raw_metrics["v_rmse"]>cfg["raw_v_rmse_max"]:
-            rows.append({"fit_id":None,"raw_rmse":raw_metrics["v_rmse"],"status":"rejected",**base})
+def generate_fits(overrides: dict | None = None, root: str | Path = "data/fits") -> list[dict]:
+    """Generate and save reduced fits without propagating classical dynamics.
+
+    Returns only *saved reduced fits*, all with the same table columns.
+    Raw candidates (including rejected candidates) are reported separately in
+    raw_fit_summary.csv. index.csv indexes saved reduced fits only.
+    """
+    cfg = merge_defaults(FOURIER_DEFAULTS, overrides)
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    g = cfg["grid"]
+    grid = (
+        np.arange(g["r_min"], g["r_max"], g["r_step"]),
+        np.arange(g["R_min"], g["R_max"], g["R_step"]),
+    )
+    rows: list[dict] = []
+    raw_rows: list[dict] = []
+    sweep = product(
+        cfg["orders"], cfg["boxes"], cfg["ridge_lambdas"],
+        cfg["order_strengths"], cfg["order_powers"],
+    )
+    for order, box, lam, strength, power in sweep:
+        mvec = build_mvec(order, cfg["basis"])
+        params = {
+            "basis": cfg["basis"],
+            "fourier_order_R": int(order[0]),
+            "fourier_order_r": int(order[1]),
+            "fourier_box_R": float(box[0]),
+            "fourier_box_r": float(box[1]),
+            "ridge_lambda": float(lam),
+            "order_strength": float(strength),
+            "order_power": float(power),
+        }
+        base = {
+            "model": cfg["model"], "grid": g, "basis": cfg["basis"],
+            "fourier_order": order, "fourier_box": box,
+            "ridge_lambda": lam, "order_strength": strength,
+            "order_power": power,
+        }
+        raw = _fit_on_support(
+            mvec, order, box, grid, cfg["model"], lam, strength, power,
+            {**base, "selection_method": "raw"},
+        )
+        raw_metrics = metrics(
+            raw, grid, cfg["model"], cfg["diagnostic_dt"], cfg["coeff_tol"],
+        )
+        accepted = raw_metrics["v_rmse"] <= cfg["raw_v_rmse_max"]
+        raw_rows.append({
+            **params,
+            "raw_fit_checksum": raw.checksum,
+            "status": "passed" if accepted else "rejected",
+            **raw_metrics,
+        })
+        if not accepted:
             continue
-        for method,n in product(cfg["selection_methods"],cfg["top_n"]):
-            if method=="amplitude":score=np.hypot(raw.A,raw.B)
-            elif method=="force_scale":score=np.hypot(raw.A,raw.B)*np.linalg.norm(raw.mu_phys,axis=1)
-            else:raise ValueError(f"Unknown selection method: {method}")
-            if int(n)<1:raise ValueError("top_n must be positive")
-            idx=np.argsort(score)[::-1][:min(int(n),len(score))]
-            details={**base,"selection_method":method,"top_n":int(n),
-                     "parent_fit_checksum":raw.checksum,
-                     "refit_ridge_multiplier":cfg["refit_ridge_multiplier"]}
-            reduced=_fit_on_support(raw.mvec[idx],order,box,grid,cfg["model"],lam*cfg["refit_ridge_multiplier"],strength,power,details)
-            quality=metrics(reduced,grid,cfg["model"],cfg["diagnostic_dt"],cfg["coeff_tol"])
-            reduced.metadata["metrics"]=quality
-            folder=save_fit(reduced,root)
-            rows.append({"fit_id":reduced.fit_id,"raw_rmse":raw_metrics["v_rmse"],
-                         "status":"saved",**quality,"path":str(folder)})
-    # A disposable listing; full metadata remains in each fit directory.
+
+        for method, n in product(cfg["selection_methods"], cfg["top_n"]):
+            if method == "amplitude":
+                score = np.hypot(raw.A, raw.B)
+            elif method == "force_scale":
+                score = np.hypot(raw.A, raw.B) * np.linalg.norm(raw.mu_phys, axis=1)
+            else:
+                raise ValueError(f"Unknown selection method: {method}")
+            if int(n) < 1:
+                raise ValueError("top_n must be positive")
+            idx = np.argsort(score)[::-1][:min(int(n), len(score))]
+            details = {
+                **base,
+                "selection_method": method,
+                "top_n": int(n),
+                "parent_fit_checksum": raw.checksum,
+                "refit_ridge_multiplier": cfg["refit_ridge_multiplier"],
+            }
+            reduced = _fit_on_support(
+                raw.mvec[idx], order, box, grid, cfg["model"],
+                lam * cfg["refit_ridge_multiplier"], strength, power,
+                details,
+            )
+            quality = metrics(
+                reduced, grid, cfg["model"], cfg["diagnostic_dt"],
+                cfg["coeff_tol"],
+            )
+            reduced.metadata["metrics"] = quality
+            folder = save_fit(reduced, root)
+            rows.append({
+                "fit_id": reduced.fit_id,
+                "status": "saved",
+                **params,
+                "raw_fit_checksum": raw.checksum,
+                "selection_method": method,
+                "top_n_requested": int(n),
+                "raw_rmse": raw_metrics["v_rmse"],
+                **quality,
+                "path": str(folder),
+            })
+
+    if not raw_rows:
+        raise ValueError("The Fourier parameter sweep contains no candidates")
+
     import csv
-    keys=list(dict.fromkeys(k for row in rows for k in row)) if rows else []
-    if keys:
-        with (Path(root)/"index.csv").open("w",newline="",encoding="utf-8") as f:
-            writer=csv.DictWriter(f,fieldnames=keys)
-            writer.writeheader();writer.writerows(rows)
+
+    def write_summary(path: Path, records: list[dict], columns: list[str]) -> None:
+        with path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=columns)
+            writer.writeheader()
+            writer.writerows(records)
+
+    # A complete, uniform table of raw screening results, with metrics for
+    # every raw fit. No reduced-fit metrics are invented for rejected fits.
+    write_summary(root / "raw_fit_summary.csv", raw_rows, list(raw_rows[0]))
+
+    # When no fit passes the raw screen, still write a header-only index so a
+    # previous run's results cannot be mistaken for newly accepted fits.
+    saved_columns = list(rows[0]) if rows else [
+        "fit_id", "status", "basis", "fourier_order_R", "fourier_order_r",
+        "fourier_box_R", "fourier_box_r", "ridge_lambda", "order_strength",
+        "order_power", "raw_fit_checksum", "selection_method",
+        "top_n_requested", "raw_rmse",
+        *list(metrics(raw, grid, cfg["model"], cfg["diagnostic_dt"], cfg["coeff_tol"])),
+        "path",
+    ]
+    write_summary(root / "index.csv", rows, saved_columns)
     return rows

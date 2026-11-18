@@ -54,3 +54,55 @@ def test_half_lattice_includes_mixed_signs():
     assert (1,-1) in map(tuple,modes)
     assert (1,1) in map(tuple,modes)
     assert (-1,1) not in map(tuple,modes)
+
+
+def test_rejected_raw_fits_have_separate_uniform_summary(tmp_path):
+    import pandas as pd
+    cfg = {
+        "orders": [[2, 2]],
+        "boxes": [[20.0, 30.0]],
+        "top_n": [2],
+        # Force rejection independently of the actual positive RMS error.
+        "raw_v_rmse_max": -1.0,
+        "grid": {
+            "r_min": -2.0, "r_max": 2.0, "r_step": 1.0,
+            "R_min": -2.0, "R_max": 2.0, "R_step": 1.0,
+        },
+    }
+    rows = generate_fits(cfg, root=tmp_path)
+    assert rows == []
+    raw_df = pd.read_csv(tmp_path / "raw_fit_summary.csv")
+    assert len(raw_df) == 1
+    assert raw_df.iloc[0]["status"] == "rejected"
+    assert np.isfinite(raw_df.iloc[0]["v_rmse"])
+    assert np.isfinite(raw_df.iloc[0]["force_combined_rmse"])
+    assert not raw_df.isna().any().any()
+    saved_df = pd.read_csv(tmp_path / "index.csv")
+    assert saved_df.empty
+    assert "fit_id" in saved_df.columns
+
+
+def test_saved_and_rejected_fit_tables_do_not_mix_columns(tmp_path):
+    import pandas as pd
+    cfg = {
+        "orders": [[2, 2]],
+        "boxes": [[20.0, 30.0]],
+        "top_n": [2],
+        "raw_v_rmse_max": 100.0,
+        "grid": {
+            "r_min": -2.0, "r_max": 2.0, "r_step": 1.0,
+            "R_min": -2.0, "R_max": 2.0, "R_step": 1.0,
+        },
+    }
+    rows = generate_fits(cfg, root=tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["status"] == "saved"
+    assert rows[0]["fit_id"]
+    assert all(np.isfinite(row["force_combined_rmse"]) for row in rows)
+    saved_df = pd.read_csv(tmp_path / "index.csv")
+    raw_df = pd.read_csv(tmp_path / "raw_fit_summary.csv")
+    assert len(saved_df) == 1
+    assert len(raw_df) == 1
+    assert raw_df.iloc[0]["status"] == "passed"
+    assert not saved_df.isna().any().any()
+    assert not raw_df.isna().any().any()

@@ -77,6 +77,14 @@ small basis/grid settings when first testing the installation. The Fourier
 workflow can produce *zero* retained fits if `raw_v_rmse_max` is too strict;
 inspect the rejected summaries before changing it.
 
+## Reading Fourier screening results
+
+`notebooks/01_fourier_workflow.ipynb` displays **two distinct tables**:
+- `saved_df` (from `generate_fits()`): accepted, reduced, and saved Fourier fits only. Every row has complete reduced-fit metrics and a usable `fit_id`. The same rows are written to `data/fits/index.csv`.
+- `raw_df` (from `data/fits/raw_fit_summary.csv`): every raw Fourier candidate, including `passed` and `rejected` entries, with raw potential and force errors.
+
+Rejected fits are intentionally **not reduced or saved**. If `saved_df` is empty, inspect the raw table's `v_rmse` values relative to `raw_v_rmse_max` in `configs/fourier.yaml`. Adjust the threshold only if the raw approximations are scientifically acceptable, or improve the Fourier configuration. No classical dynamics are run until `selected_for_dynamics` explicitly names saved fit IDs.
+
 ## Results and reproducibility
 
 A **fit** has a content-derived ID (`fit_<checksum>`), immutable coefficient
