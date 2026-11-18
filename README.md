@@ -27,8 +27,33 @@ Start with the three small notebooks in order:
 3. `notebooks/03_results_analysis.ipynb` — search metadata and load recorded
    observables and snapshots **without propagating anything**.
 
-Run notebooks from the repository root or the `notebooks/` directory. Python
-imports use the installed editable package.
+Run notebooks from the repository root or the `notebooks/` directory. Each
+notebook automatically finds `src/bosonic_algo` and adds the local checkout to
+`sys.path` **before importing the package**, so an editable install is not
+required for package discovery. Dependencies must still be installed in the
+notebook's selected Python kernel.
+
+### If a notebook cannot import the package
+
+First verify where its kernel is running:
+
+```python
+import sys
+from pathlib import Path
+print(sys.executable)
+print(Path.cwd())
+```
+
+From a terminal in the repository root, run `python -m pip install -e .`
+using the Python environment selected as the Jupyter kernel. Alternatively,
+run `%pip install -e ..` **inside the notebook** if its working directory is
+`bosonic_algo/notebooks/`, or `%pip install -e .` if it is the repository
+root. The `%pip` command installs into the active notebook kernel. Restart
+the kernel after installation if the import error persists.
+
+If you launch Jupyter from outside the checkout, change its working directory
+to the repository root or `notebooks/`; otherwise the automatic checkout
+discovery cannot find `configs/` or `data/`.
 
 ## Python API
 
