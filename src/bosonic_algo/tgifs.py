@@ -5,14 +5,19 @@ Bosonic-Qiskit and Qiskit are imported lazily so classical tools work without th
 """
 from __future__ import annotations
 import math
+from time import perf_counter
 import numpy as np
 from scipy.linalg import expm
+from .progress import ProgressReporter
 from .config import times_from_config
 from .fourier import FourierFit
 from .physics import coordinate_lengths, x_fock, p_fock
 
 
-def run_tgifs(cfg: dict, fit: FourierFit, c_e: np.ndarray, c_R: np.ndarray) -> dict[str,np.ndarray]:
+def run_tgifs(cfg: dict, fit: FourierFit, c_e: np.ndarray, c_R: np.ndarray,
+              *, progress: ProgressReporter | None = None) -> dict[str,np.ndarray]:
+    if progress:
+        progress.log("Importing quantum simulator and preparing TGIFS registers...")
     try:
         import qiskit
         import bosonic_qiskit
@@ -151,8 +156,37 @@ def run_tgifs(cfg: dict, fit: FourierFit, c_e: np.ndarray, c_R: np.ndarray) -> d
         free_kinetic(c,dt/2,m["M"],lR,qR[0],NR)
         free_kinetic(c,dt/2,m["me"],lr,qr[0],Nr)
 
-    step=circuit()
-    substep(step,sub_dt)
+    if progress:
+        progress.log(
+            f"Cutoffs: Nr={Nr}, NR={NR}, Nph={Nph}; modes={len(fit.A)}; "
+            f"output points={len(times)}, substeps/interval={substeps}"
+        )
+        progress.log("Building TGIFS one-substep circuit...")
+    building = perf_counter()
+    step = circuit()
+    substep(step, sub_dt)
+    if progress:
+        progress.log(
+            f"Constructed substep: {len(step.data)} instructions, "
+            f"{len(step.__dict__.get('_controlled_displacement_cache', {}))} "
+            "distinct controlled-displacement operations"
+        )
+        progress.log("Preparing reusable step instruction...")
+    # The quantum evolution applies the same operation at every substep.
+    # Convert only once, rather than asking Statevector.evolve to convert the
+    # entire QuantumCircuit repeatedly (with fallback for older CVCircuit APIs).
+    try:
+        step_operator = step.to_instruction()
+        if progress:
+            progress.log("Using prebuilt TGIFS step instruction")
+    except (TypeError, AttributeError, NotImplementedError, ValueError) as exc:
+        step_operator = step
+        if progress:
+            progress.log(f"Instruction conversion unavailable ({type(exc).__name__}); using circuit")
+    if progress:
+        progress.stage("Circuit construction", building)
+        progress.log("Preparing initial state...")
+    initialization = perf_counter()
     init=circuit()
     init.initialize([1.0,0.0],anc)
     init.cv_initialize(c_R,qR[0])
@@ -162,6 +196,8 @@ def run_tgifs(cfg: dict, fit: FourierFit, c_e: np.ndarray, c_R: np.ndarray) -> d
         ph[0]=1.
         init.cv_initialize(ph,qph[0])
     state=Statevector.from_instruction(init)
+    if progress:
+        progress.stage("Initial quantum state preparation", initialization)
     r_op=m["r0"]*np.eye(Nr)+lr*x_fock(Nr)
     R_op=m["R0"]*np.eye(NR)+lR*x_fock(NR)
     r2=r_op@r_op;R2=R_op@R_op
@@ -170,11 +206,21 @@ def run_tgifs(cfg: dict, fit: FourierFit, c_e: np.ndarray, c_R: np.ndarray) -> d
     traces={key:[] for key in names}
     snaps=[];snap_indices=[]
     every=out["snapshot_every"]
+    total_steps = max(0, len(times)-1) * substeps
+    completed_steps = 0
+    if progress:
+        progress.start_steps(total_steps, float(times[0]), float(times[-1]))
+    observable_seconds = 0.0
     for i in range(len(times)):
-        if i%10==0:
-            print("step ",i)
         if i:
-            for _ in range(substeps):state=state.evolve(step)
+            dt_interval = float(times[i] - times[i-1])
+            for substep_index in range(substeps):
+                state = state.evolve(step_operator)
+                completed_steps += 1
+                if progress:
+                    current_time = float(times[i-1]) + (substep_index + 1) * (dt_interval/substeps)
+                    progress.checkpoint(completed_steps, total_steps, current_time)
+        observing = perf_counter()
         full=np.asarray(state.data).reshape((2,Nph,Nr,NR) if ph_enabled else (2,Nr,NR))
         psi=full[0]
         p0=float(np.vdot(psi,psi).real)
@@ -191,10 +237,20 @@ def run_tgifs(cfg: dict, fit: FourierFit, c_e: np.ndarray, c_R: np.ndarray) -> d
               "mean_R":mR,"sigma_R":np.sqrt(max(R2mean-mR*mR,0)),
               "mean_nph":float(np.dot(np.arange(len(pops)),pops)),
               "p_ph_vacuum":float(pops[0]),"photon_edge_pop":float(pops[-1]) if ph_enabled else 0.,
-              "leak_r":float(prob[:,Nr:,:].sum()),"leak_R":float(prob[:,:,NR:].sum())}
+              # Probability in the highest two Fock levels of each
+              # truncated mode. The previous slices started at the cutoff
+              # and were always empty, incorrectly reporting zero leakage.
+              "leak_r":float(prob[:,-min(2,Nr):,:].sum()),
+              "leak_R":float(prob[:,:,-min(2,NR):].sum())}
         for key in names:traces[key].append(vals[key])
         if every is not None and (i%int(every)==0 or (out["save_last"] and i==len(times)-1)):
             snaps.append(psi.copy());snap_indices.append(i)
+        observable_seconds += perf_counter() - observing
+    if progress:
+        progress.log(
+            f"Propagation finished: {completed_steps} steps; "
+            f"observable evaluation total {observable_seconds:.2f}s"
+        )
     saved_shape=(Nph,Nr,NR) if ph_enabled else (Nr,NR)
     result={key:np.asarray(v) for key,v in traces.items()}
     result.update({"times":times,
