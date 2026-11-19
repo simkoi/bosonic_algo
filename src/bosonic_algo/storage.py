@@ -10,18 +10,29 @@ import tempfile
 from datetime import datetime, timezone
 from typing import Callable
 import numpy as np
+from time import perf_counter
+from .progress import ProgressReporter
 from .fourier import canonical_json
 
 RESULT_SCHEMA=1
 
 
-def source_fingerprint() -> str:
-    """Hash computational sources to invalidate changed numerical implementations."""
-    folder=Path(__file__).parent
-    h=hashlib.sha256()
-    for name in ("config.py","physics.py","fourier.py","classical.py","tgifs.py"):
+def source_fingerprint(method: str | None = None) -> str:
+    """Hash numerical code, excluding logging and the other solver.
+
+    Logging-only changes do not modify this hash, but edits to numerical
+    source files deliberately invalidate the associated calculation.
+    """
+    if method not in (None, "classical", "tgifs"):
+        raise ValueError("Unknown propagation method")
+    folder = Path(__file__).parent
+    common = ("config.py", "physics.py", "fourier.py")
+    specific = (("classical.py", "tgifs.py") if method is None else
+                ("classical.py",) if method == "classical" else ("tgifs.py",))
+    h = hashlib.sha256()
+    for name in (*common, *specific):
         h.update(name.encode())
-        h.update((folder/name).read_bytes())
+        h.update((folder / name).read_bytes())
     return h.hexdigest()
 
 
@@ -112,15 +123,33 @@ class ResultStore:
             if temp.exists():shutil.rmtree(temp)
         return meta
 
-    def run_or_load(self,method:str,inputs:dict,calculate:Callable[[],dict],*,force=False)->tuple[dict,dict,bool]:
-        run_id,fingerprint=result_identity(inputs)
-        folder=self.path(method,run_id)
+    def run_or_load(self, method: str, inputs: dict, calculate: Callable[[], dict],
+                    *, force: bool = False, progress: ProgressReporter | None = None
+                    ) -> tuple[dict, dict, bool]:
+        run_id, fingerprint = result_identity(inputs)
+        folder = self.path(method, run_id)
         if folder.exists() and not force:
-            data,meta=self.load(method,run_id,expected_fingerprint=fingerprint)
-            return data,meta,True
-        data=calculate()
-        meta=self.save(method,inputs,data,replace=force)
-        return data,meta,False
+            if progress:
+                progress.log(f"Cache hit {run_id}: loading saved results...")
+            started = perf_counter()
+            data, meta = self.load(method, run_id, expected_fingerprint=fingerprint)
+            if progress:
+                progress.stage("Cache loading and validation", started)
+            return data, meta, True
+        if progress:
+            progress.log(f"{'Forced recompute' if force else 'Cache miss'} {run_id}")
+        started = perf_counter()
+        data = calculate()
+        if progress:
+            progress.stage("Propagation and observables", started)
+            progress.log("Saving numerical arrays and metadata...")
+        saving = perf_counter()
+        meta = self.save(method, inputs, data, replace=force)
+        if progress:
+            progress.stage("Saving results", saving)
+            progress.log(f"Saved run {run_id}: {self.path(method, run_id)}")
+        return data, meta, False
+
 
     def list_results(self,method:str|None=None)->list[dict]:
         methods=[method] if method else ["classical","tgifs"]

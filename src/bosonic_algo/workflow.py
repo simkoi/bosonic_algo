@@ -7,6 +7,8 @@ from .fourier import load_fit, FourierFit
 from .classical import run_classical
 from .tgifs import run_tgifs
 from .storage import ResultStore,source_fingerprint
+from .progress import ProgressReporter
+from time import perf_counter
 
 
 def _load_verified_fit(fit_id,fit_root,cfg):
@@ -18,29 +20,68 @@ def _load_verified_fit(fit_id,fit_root,cfg):
     return fit
 
 
-def run_or_load_classical(overrides:dict|None=None, *,potential="exact", fit_id=None,
-                          fit_root="data/fits",result_root="results",force=False):
-    """Return (arrays, metadata, loaded_from_cache). No Fourier fitting occurs."""
-    cfg=dynamics_config(overrides)
-    fit=_load_verified_fit(fit_id,fit_root,cfg) if potential=="fitted" else None
-    if potential not in ("exact","fitted"):raise ValueError("Unknown classical potential")
-    cr,cR,captured=initial_fock_coefficients(cfg)
-    identity=normalized_for_method(cfg,"classical",potential,fit.checksum if fit else None,initial_hash(cr,cR))
-    identity.update({"fit_id":fit.fit_id if fit else None,"code_fingerprint":source_fingerprint()})
-    store=ResultStore(result_root)
-    return store.run_or_load("classical",identity,
-                             lambda:run_classical(cfg,cr,cR,potential=potential,fit=fit),force=force)
+def _progress(cfg: dict, method: str) -> ProgressReporter:
+    runtime = cfg["runtime"]
+    return ProgressReporter(
+        method,
+        enabled=runtime["show_progress"],
+        interval_seconds=float(runtime["progress_interval_seconds"]),
+    )
 
 
-def run_or_load_tgifs(fit_id:str,overrides:dict|None=None, *,fit_root="data/fits",result_root="results",force=False):
-    """Unified 2-mode / 3-mode bosonic simulation with transparent caching."""
-    cfg=dynamics_config(overrides)
-    fit=_load_verified_fit(fit_id,fit_root,cfg)
-    cr,cR,captured=initial_fock_coefficients(cfg)
-    identity=normalized_for_method(cfg,"tgifs","fitted",fit.checksum,initial_hash(cr,cR))
-    identity.update({"fit_id":fit.fit_id,"code_fingerprint":source_fingerprint()})
-    store=ResultStore(result_root)
-    return store.run_or_load("tgifs",identity,lambda:run_tgifs(cfg,fit,cr,cR),force=force)
+def run_or_load_classical(overrides: dict | None = None, *, potential="exact",
+                          fit_id=None, fit_root="data/fits",
+                          result_root="results", force=False):
+    """Load or propagate classical dynamics using immutable saved fits."""
+    cfg = dynamics_config(overrides)
+    if potential not in ("exact", "fitted"):
+        raise ValueError("Unknown classical potential")
+    progress = _progress(cfg, "CLASSICAL")
+    progress.log(f"Preparing {potential} molecular dynamics...")
+    started = perf_counter()
+    fit = _load_verified_fit(fit_id, fit_root, cfg) if potential == "fitted" else None
+    cr, cR, captured = initial_fock_coefficients(cfg)
+    progress.stage("Initial state and fit loading", started)
+    identity = normalized_for_method(
+        cfg, "classical", potential, fit.checksum if fit else None,
+        initial_hash(cr, cR),
+    )
+    identity.update({
+        "fit_id": fit.fit_id if fit else None,
+        "code_fingerprint": source_fingerprint("classical"),
+    })
+    store = ResultStore(result_root)
+    return store.run_or_load(
+        "classical", identity,
+        lambda: run_classical(
+            cfg, cr, cR, potential=potential, fit=fit, progress=progress
+        ), force=force, progress=progress,
+    )
+
+
+def run_or_load_tgifs(fit_id: str, overrides: dict | None = None, *,
+                      fit_root="data/fits", result_root="results", force=False):
+    """Load or propagate unified 2D/3D TGIFS molecular dynamics."""
+    cfg = dynamics_config(overrides)
+    progress = _progress(cfg, "TGIFS")
+    progress.log(f"Preparing Fourier fit {fit_id} and initial state...")
+    started = perf_counter()
+    fit = _load_verified_fit(fit_id, fit_root, cfg)
+    cr, cR, captured = initial_fock_coefficients(cfg)
+    progress.stage("Initial state and fit loading", started)
+    identity = normalized_for_method(
+        cfg, "tgifs", "fitted", fit.checksum, initial_hash(cr, cR)
+    )
+    identity.update({
+        "fit_id": fit.fit_id,
+        "code_fingerprint": source_fingerprint("tgifs"),
+    })
+    store = ResultStore(result_root)
+    return store.run_or_load(
+        "tgifs", identity,
+        lambda: run_tgifs(cfg, fit, cr, cR, progress=progress),
+        force=force, progress=progress,
+    )
 
 
 def selected_fit_classical_validation(fit_ids:list[str],overrides:dict|None=None, *,fit_root="data/fits",result_root="results"):
