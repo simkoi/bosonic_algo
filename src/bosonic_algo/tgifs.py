@@ -171,6 +171,8 @@ def run_tgifs(cfg: dict, fit: FourierFit, c_e: np.ndarray, c_R: np.ndarray) -> d
     snaps=[];snap_indices=[]
     every=out["snapshot_every"]
     for i in range(len(times)):
+        if i%10==0:
+            print("step ",i)
         if i:
             for _ in range(substeps):state=state.evolve(step)
         full=np.asarray(state.data).reshape((2,Nph,Nr,NR) if ph_enabled else (2,Nr,NR))

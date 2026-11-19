@@ -7,15 +7,15 @@ basis:
 time:
   start: 0.0
   stop: 1400.0
-  points: 71
+  points: 141
 cavity:
   enabled: false
-  include_dse: true
+  include_dse: false
   omega_alpha: 0.1
   lambda_alpha: 0.005
-  cutoff_ph: 8
+  cutoff_ph: 2
 tgifs:
-  substeps: 20
+  substeps: 10
   kinetic: gaussian
 output:
   snapshot_every: 10
