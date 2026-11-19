@@ -14,6 +14,25 @@ from .fourier import FourierFit
 from .physics import coordinate_lengths, x_fock, p_fock
 
 
+
+
+def cutoff_edge_populations(prob: np.ndarray, *, edge_levels: int = 2) -> tuple[float, float]:
+    """Population near the cutoff in the r and R Fock modes.
+
+    prob must have axes (photon, electronic-r, nuclear-R), even when the
+    cavity is disabled (then the photon dimension is one). This measures
+    the top edge of the retained basis, not the discarded outside tail.
+    """
+    prob = np.asarray(prob, dtype=float)
+    if prob.ndim != 3 or min(prob.shape) < 1:
+        raise ValueError("Expected non-empty (photon, r, R) probability array")
+    if edge_levels < 1:
+        raise ValueError("edge_levels must be positive")
+    return (
+        float(prob[:, -min(edge_levels, prob.shape[1]):, :].sum()),
+        float(prob[:, :, -min(edge_levels, prob.shape[2]):].sum()),
+    )
+
 def run_tgifs(cfg: dict, fit: FourierFit, c_e: np.ndarray, c_R: np.ndarray,
               *, progress: ProgressReporter | None = None) -> dict[str,np.ndarray]:
     if progress:
@@ -233,6 +252,7 @@ def run_tgifs(cfg: dict, fit: FourierFit, c_e: np.ndarray, c_R: np.ndarray,
         R2mean=float(np.einsum('pra,ab,prb->',psi_ph.conj(),R2,psi_ph,optimize=True).real)
         prob=np.abs(psi_ph)**2
         pops=np.sum(prob,axis=(1,2))
+        edge_r, edge_R = cutoff_edge_populations(prob)
         vals={"p0":p0,"mean_r":mr,"sigma_r":np.sqrt(max(r2mean-mr*mr,0)),
               "mean_R":mR,"sigma_R":np.sqrt(max(R2mean-mR*mR,0)),
               "mean_nph":float(np.dot(np.arange(len(pops)),pops)),
@@ -240,8 +260,8 @@ def run_tgifs(cfg: dict, fit: FourierFit, c_e: np.ndarray, c_R: np.ndarray,
               # Probability in the highest two Fock levels of each
               # truncated mode. The previous slices started at the cutoff
               # and were always empty, incorrectly reporting zero leakage.
-              "leak_r":float(prob[:,-min(2,Nr):,:].sum()),
-              "leak_R":float(prob[:,:,-min(2,NR):].sum())}
+              "leak_r":edge_r,
+              "leak_R":edge_R}
         for key in names:traces[key].append(vals[key])
         if every is not None and (i%int(every)==0 or (out["save_last"] and i==len(times)-1)):
             snaps.append(psi.copy());snap_indices.append(i)
