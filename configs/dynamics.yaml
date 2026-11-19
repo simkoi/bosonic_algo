@@ -20,3 +20,11 @@ tgifs:
 output:
   snapshot_every: 10
   save_last: true
+
+# Execution and reporting controls (excluded from simulation cache keys).
+runtime:
+  run_classical_exact: false
+  run_classical_fitted: false
+  run_tgifs: true
+  show_progress: true
+  progress_interval_seconds: 15.0

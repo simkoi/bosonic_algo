@@ -127,6 +127,38 @@ committed intentionally** for shared reproducible experiments. Record the
 model and dependency versions with results. Never assume results from an older
 quantum gate-library version have identical gate semantics.
 
+## Phase 1 performance and progress controls
+
+`notebooks/02_dynamics.ipynb` now runs TGIFS by default and leaves **both
+classical reference calculations optional**. Set the following in
+`configs/dynamics.yaml`:
+
+```yaml
+runtime:
+  run_classical_exact: false
+  run_classical_fitted: false
+  run_tgifs: true
+  show_progress: true
+  progress_interval_seconds: 15.0
+```
+
+When requested, the simulation prints stage timings, gate/instruction counts,
+substep progress, elapsed time, estimated remaining time, and cache hit/save
+status. Messages use `flush=True`, so output appears during a long run. The
+TGIFS engine converts the prepared substep circuit to an instruction **once**
+before repeatedly evolving the statevector; a circuit fallback is retained
+for older Bosonic-Qiskit versions. Validate this optimization on the installed
+quantum stack before relying on production trajectories.
+
+Progress and baseline-selection settings are not numerical parameters:
+changing them does not invalidate a cache entry. Numerical code changes
+still invalidate the corresponding solver's cache. Previously saved results
+using an earlier global source-fingerprint strategy might have different
+run IDs. Cutoff `leak_r`/`leak_R` now measure normalized population in the
+**two highest retained Fock levels**, rather than always-empty slices; these
+diagnostics are indicators of truncation effects, not an estimate of the
+actual discarded probability. The output fields keep their previous names.
+
 ## Scientific assumptions and checks
 
 - Fourier modes use `(R, r)` wavevector order. `omega`, `Omega` are Fock

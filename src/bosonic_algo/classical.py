@@ -1,14 +1,17 @@
 """Matrix-free classical molecular and optional molecule-cavity evolution."""
 from __future__ import annotations
+from time import perf_counter
 import numpy as np
 from scipy.sparse.linalg import LinearOperator, expm_multiply
 from .physics import coordinate_lengths, potential_matrix, shin_metiu_potential, x_fock, kinetic_1d
 from .fourier import FourierFit
+from .progress import ProgressReporter
 from .config import times_from_config
 
 
 def run_classical(cfg: dict, c_e: np.ndarray, c_R: np.ndarray,
-                  *, potential: str="exact", fit: FourierFit | None=None) -> dict[str,np.ndarray]:
+                  *, potential: str="exact", fit: FourierFit | None=None,
+                  progress: ProgressReporter | None=None) -> dict[str,np.ndarray]:
     """Propagate exp(-iHt/hbar) with no TGIFS/Trotter approximation.
 
     Args:
@@ -32,10 +35,15 @@ def run_classical(cfg: dict, c_e: np.ndarray, c_R: np.ndarray,
     R_op=m["R0"]*np.eye(NR)+lR*x_fock(NR)
     r2=r_op@r_op
     R2=R_op@R_op
+    if progress:
+        progress.log("Constructing Fock-projected potential matrix...")
+    matrix_started = perf_counter()
     if potential=="exact":
         Vmat=potential_matrix(lambda r,R:shin_metiu_potential(r,R,m),cfg)
     else:
         Vmat=potential_matrix(fit.potential,cfg)
+    if progress:
+        progress.stage("Potential matrix construction", matrix_started)
     Xph=x_fock(Nph) if ph_enabled else np.zeros((1,1))
     Eph=(cav["omega_alpha"]*(np.arange(Nph)+0.5)) if ph_enabled else np.zeros(1)
     coupling=float(cav["lambda_alpha"])*np.sqrt(float(cav["omega_alpha"])) if ph_enabled else 0.0
@@ -76,6 +84,9 @@ def run_classical(cfg: dict, c_e: np.ndarray, c_R: np.ndarray,
     snapshots=[]
     indices=[]
     every=out["snapshot_every"]
+    total_steps = max(0, len(times)-1)
+    if progress:
+        progress.start_steps(total_steps, float(times[0]), float(times[-1]))
     for i,t in enumerate(times):
         if i:
             dt=float(t-times[i-1]);scale=-1j*dt/m["hbar"]
@@ -83,6 +94,8 @@ def run_classical(cfg: dict, c_e: np.ndarray, c_R: np.ndarray,
                                     matvec=lambda v:scale*H_dot(v),
                                     rmatvec=lambda v:np.conj(scale)*H_dot(v))
             psi=expm_multiply(operator,psi,traceA=scale*trace_H)
+            if progress:
+                progress.checkpoint(i, total_steps, float(t))
         state=psi.reshape(Nph,Nr,NR)
         norm=float(np.vdot(psi,psi).real)
         rmean=float(np.einsum('pra,rs,psa->',state.conj(),r_op,state,optimize=True).real)
