@@ -24,6 +24,9 @@ DYNAMICS_DEFAULTS = {
                "omega_alpha": 0.1, "lambda_alpha": 0.005, "cutoff_ph": 8},
     "tgifs": {"substeps": 20, "kinetic": "gaussian", "coeff_tol": 1e-12},
     "output": {"snapshot_every": 10, "save_last": True},
+    "runtime": {"run_classical_exact": False, "run_classical_fitted": False,
+                "run_tgifs": True, "show_progress": True,
+                "progress_interval_seconds": 15.0},
 }
 FOURIER_DEFAULTS = {
     "model": MODEL_DEFAULTS,
@@ -68,6 +71,12 @@ def dynamics_config(overrides: dict | None = None) -> dict:
         raise ValueError("Bosonic-Qiskit photon cutoff must be a power of two")
     if cfg["output"]["snapshot_every"] is not None and int(cfg["output"]["snapshot_every"]) < 1:
         raise ValueError("snapshot_every must be positive or None")
+    runtime = cfg["runtime"]
+    if float(runtime["progress_interval_seconds"]) <= 0:
+        raise ValueError("progress_interval_seconds must be positive")
+    if any(not isinstance(runtime[k], bool) for k in
+           ("run_classical_exact", "run_classical_fitted", "run_tgifs", "show_progress")):
+        raise ValueError("Runtime switches must be booleans")
     if any(float(cfg["model"][k]) <= 0 for k in ("hbar", "me", "M", "omega", "Omega", "Rl", "Rr", "Rf")):
         raise ValueError("Invalid physical parameters")
     return cfg
@@ -90,6 +99,8 @@ def read_yaml(path: str | Path) -> dict:
 def normalized_for_method(cfg: dict, method: str, potential: str, fit_checksum: str | None, initial_hash: str) -> dict:
     """Only meaningful simulation inputs contribute to a cache key."""
     c = deepcopy(cfg)
+    # Runtime switches and reporting settings must not invalidate cached trajectories.
+    c.pop("runtime", None)
     # Snapshot/output policy is part of the cache key to avoid returning wrong snapshots.
     if not c["cavity"]["enabled"]:
         c["cavity"] = {"enabled": False}
